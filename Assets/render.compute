@@ -1,0 +1,45 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+
+struct Particle {
+    float3 pos;
+    float3 velocity;
+    float mass;
+};
+
+
+uint2 res;
+float fov;
+float3 origin;
+uint num_particles;
+
+RWStructuredBuffer<Particle> particles;
+
+RWTexture2D<float4> Result;
+
+[numthreads(8, 8, 1)]
+void CSMain (uint3 id : SV_DispatchThreadID) {
+    float rad = 0.25;
+    Result[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
+    float rad_fov = radians(fov);
+    float horz = sin(rad_fov) * (int)(id.x - ((res.x >> 1) + 1)) / res.x;
+    float vert = sin(rad_fov * res.y / res.x) * (int)(id.y - ((res.y >> 1) + 1)) / res.y;
+    float3 start = float3(horz, vert, 1.0) * rsqrt(horz * horz + vert * vert + 1);
+
+    uint i = 0;
+    for (; i < num_particles; i++) {
+        Particle particle = particles[i];
+        float3 diff = origin - particle.pos;
+        float mid = dot(diff, start);
+        float discrim = mid * mid + (rad * rad - dot(diff, diff));
+        if (discrim > 0) {
+            float3 intersect = origin + start * -(mid + sqrt(discrim));
+            if (dot(intersect - origin, start) < 0) {
+                continue;
+            }
+            Result[id.xy] = float4(1.0, 0.0, 0.0, 1.0);
+            break;
+        }
+    }
+}

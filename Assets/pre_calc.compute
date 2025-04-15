@@ -1,0 +1,48 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+
+struct Particle {
+    float3 pos;
+    float3 velocity;
+    float mass;
+};
+
+
+uint num_particles;
+
+RWStructuredBuffer<Particle> particles;
+RWBuffer<float> densities;
+
+
+float smooth_kern(float dist, float rad);
+float calc_dens(float3 pos);
+
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= num_particles) {
+        return;
+    }
+    
+    densities[id.x] = calc_dens(particles[id.x].pos);
+}
+
+
+float smooth_kern(float dist, float rad) {
+    
+    return dist >= rad ? 0 : pow(rad - dist, 5) * 6.68450761 / pow(rad, 7);
+}
+
+
+float calc_dens(float3 pos) {
+    float dens = 0;
+
+    for (uint i = 0; i < num_particles; i++) {
+        float3 diff = particles[i].pos - pos;
+        dens += particles[i].mass * smooth_kern(sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z), 5);
+    }
+
+    return dens;
+}

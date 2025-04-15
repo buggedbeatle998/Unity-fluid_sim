@@ -1,0 +1,124 @@
+#pragma kernel CSMain
+
+struct Particle {
+    float3 pos;
+    float3 velocity;
+    float mass;
+};
+
+
+float2 bounds;
+uint num_particles;
+float delta_time;
+float targ_dens;
+float press_mult;
+
+RWStructuredBuffer<Particle> particles;
+RWBuffer<float> densities;
+
+
+float smooth_kern(float dist, float rad);
+float smooth_kern_deriv(float dist, float rad);
+float calc_dens(float3 pos);
+float3 calc_dens_deriv(float3 pos);
+float3 calc_pressure(float3 pos);
+float pressure_force(float dens);
+
+
+[numthreads(64, 1, 1)]
+void CSMain (uint3 id : SV_DispatchThreadID) {
+    if (id.x >= num_particles) {
+        return;
+    }
+
+    float3 pos = particles[id.x].pos;
+    float3 velocity = particles[id.x].velocity;
+    float mass = particles[id.x].mass;
+
+    float3 accel = calc_pressure(pos) / densities[id.x];
+    velocity += accel * delta_time;
+
+    pos += velocity * delta_time;
+    while (true) {
+        if (pos.x < 0.0) {
+            velocity.x = -velocity.x;
+            pos.x = -pos.x;
+        } else if (pos.y < 0.0) {
+            velocity.y = -velocity.y;
+            pos.y = -pos.y;
+        } else if (pos.x > bounds.x) {
+            velocity.x = -velocity.x;
+            pos.x = bounds.x + bounds.x - pos.x;
+        } else if (pos.y > bounds.y) {
+            velocity.y = -velocity.y;
+            pos.y = bounds.y + bounds.y - pos.y;
+        } else {
+            break;
+        }
+    }
+
+    particles[id.x].pos = pos;
+    particles[id.x].velocity = velocity;
+}
+
+
+float smooth_kern(float dist, float rad) {
+    
+    return dist >= rad ? 0 : pow(rad - dist, 5) * 6.68450761 / pow(rad, 7);
+}
+
+
+float smooth_kern_deriv(float dist, float rad) {
+    return dist >= rad ? 0 : pow(rad - dist, 4) * -33.422538 / pow(rad, 7);
+}
+
+
+float calc_dens(float3 pos) {
+    float dens = 0;
+
+    for (uint i = 0; i < num_particles; i++) {
+        float3 diff = particles[i].pos - pos;
+        dens += particles[i].mass * smooth_kern(sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z), 5);
+    }
+
+    return dens;
+}
+
+
+float3 calc_dens_deriv(float3 pos) {
+    float3 grad = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < num_particles; i++) {
+        float3 diff = particles[i].pos - pos;
+        float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+        if (mag == 0.0) {
+            continue;
+        }
+        mag = sqrt(mag);
+        grad += (diff / mag) * particles[i].mass * smooth_kern_deriv(mag, 5);
+    }
+
+    return grad;
+}
+
+
+float3 calc_pressure(float3 pos) {
+    float3 grad = float3(0.0, 0.0, 0.0);
+
+    for (uint i = 0; i < num_particles; i++) {
+        float3 diff = particles[i].pos - pos;
+        float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+        if (mag == 0.0) {
+            continue;
+        }
+        mag = sqrt(mag);
+        grad += (diff / mag) * particles[i].mass * smooth_kern_deriv(mag, 5) * pressure_force(densities[i]) / densities[i];
+    }
+
+    return grad;
+}
+
+
+float pressure_force(float dens) {
+    return (dens - targ_dens) * press_mult;
+}

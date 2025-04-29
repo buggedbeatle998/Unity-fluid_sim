@@ -46,7 +46,7 @@ public class render_spheres : MonoBehaviour
     }
 
     GUIStyle myButtonStyle;
-    void OnGUI () 
+    void OnGUI ()
     {
         Event e = Event.current;
         

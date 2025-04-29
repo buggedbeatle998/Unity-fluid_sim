@@ -1,118 +1,133 @@
-#pragma kernel CSMain
-
-struct Particle {
-    float3 pos;
-    float3 velocity;
-    float mass;
-};
+#pragma kernel sim_step
 
 
-float2 bounds;
+float3 bounds;
 uint num_particles;
 float delta_time;
-float targ_dens;
 float press_mult;
+float smoothing_rad;
+float smooth_scale;
+float3 gravity;
+float look_ahead;
 
-RWStructuredBuffer<Particle> particles;
-RWBuffer<float> densities;
+RWStructuredBuffer<float3> positions;
+RWStructuredBuffer<float3> velocities;
+RWBuffer<float> masses;
+Buffer<float> densities;
+RWStructuredBuffer<float3> pred_pos;
+RWBuffer<uint> part_map;
+RWBuffer<uint> keys;
+RWBuffer<uint> start_i;
 
 
 float smooth_kern(float dist, float rad);
 float smooth_kern_deriv(float dist, float rad);
-float calc_dens(float3 pos);
-float3 calc_dens_deriv(float3 pos);
-float3 calc_pressure(float3 pos);
+float3 calc_pressure(uint index);
 float pressure_force(float dens);
+uint hash(uint x, uint y, uint z, uint table_size);
+uint mod(uint num, uint denom);
+float3 add_grad(uint x, uint y, uint z, float rad_sqr, uint index);
 
 
-[numthreads(64, 1, 1)]
-void CSMain (uint3 id : SV_DispatchThreadID) {
+[numthreads(1024, 1, 1)]
+void sim_step(uint3 id : SV_DispatchThreadID) {
     if (id.x >= num_particles) {
         return;
     }
 
-    float3 pos = particles[id.x].pos;
-    float3 velocity = particles[id.x].velocity;
-    float mass = particles[id.x].mass;
+    float3 pos = positions[id.x];
+    float3 velocity = velocities[id.x];
+    float mass = masses[id.x];
 
-    float3 accel = calc_pressure(pos) / densities[id.x];
+    float3 accel = calc_pressure(id.x) / mass;
     velocity += accel * delta_time;
+    velocity.y += gravity.y * delta_time;
 
     pos += velocity * delta_time;
+    float damp = 0.01;
     while (true) {
         if (pos.x < 0.0) {
-            velocity.x = -velocity.x;
+            velocity.x = -damp * velocity.x;
             pos.x = -pos.x;
         } else if (pos.y < 0.0) {
-            velocity.y = -velocity.y;
+            velocity.y = -damp * velocity.y;
             pos.y = -pos.y;
         } else if (pos.x > bounds.x) {
-            velocity.x = -velocity.x;
+            velocity.x = -damp * velocity.x;
             pos.x = bounds.x + bounds.x - pos.x;
         } else if (pos.y > bounds.y) {
-            velocity.y = -velocity.y;
+            velocity.y = -damp * velocity.y;
             pos.y = bounds.y + bounds.y - pos.y;
         } else {
             break;
         }
     }
 
-    particles[id.x].pos = pos;
-    particles[id.x].velocity = velocity;
+    positions[id.x] = pos;
+    velocities[id.x] = velocity;
 }
 
 
 float smooth_kern(float dist, float rad) {
-    
-    return dist >= rad ? 0 : pow(rad - dist, 5) * 6.68450761 / pow(rad, 7);
+    return dist < rad ? pow(rad - dist, 5) * 6.68450761 / pow(rad, 7) * smooth_scale : 0;
 }
 
 
 float smooth_kern_deriv(float dist, float rad) {
-    return dist >= rad ? 0 : pow(rad - dist, 4) * -33.422538 / pow(rad, 7);
+    return dist < rad ? pow(rad - dist, 4) * -33.422538 / pow(rad, 7) * smooth_scale : 0;
 }
 
 
-float calc_dens(float3 pos) {
-    float dens = 0;
-
-    for (uint i = 0; i < num_particles; i++) {
-        float3 diff = particles[i].pos - pos;
-        dens += particles[i].mass * smooth_kern(sqrt(diff.x * diff.x + diff.y * diff.y + diff.z * diff.z), 5);
-    }
-
-    return dens;
-}
-
-
-float3 calc_dens_deriv(float3 pos) {
+float3 calc_pressure(uint index) {
     float3 grad = float3(0.0, 0.0, 0.0);
+    float rad_sqr = smoothing_rad * smoothing_rad;
+    int posx = (int)pred_pos[index].x / smoothing_rad;
+    int posy = (int)pred_pos[index].y / smoothing_rad;
+    int2 sres = int2((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad));
 
-    for (uint i = 0; i < num_particles; i++) {
-        float3 diff = particles[i].pos - pos;
-        float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-        if (mag == 0.0) {
-            continue;
+    for (int m = posx - 1; m < posx + 2; m++) {
+        for (int n = posy - 1; n < posy + 2; n++) {
+            if (m >= 0 && n >= 0 && m < sres.x && n < sres.y) {
+                grad += add_grad((uint)m, (uint)n, 0, rad_sqr, index);
+            }
         }
-        mag = sqrt(mag);
-        grad += (diff / mag) * particles[i].mass * smooth_kern_deriv(mag, 5);
     }
+
+    // for (uint i = 0; i < num_particles; i++) {
+    //     if (index == i) {
+    //         continue;
+    //     }
+    //     float3 diff = pred_pos[index] - pred_pos[i];
+    //     float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+    //     if (mag == 0.0 || mag > rad_sqr) {
+    //         continue;
+    //     }
+    //     mag = sqrt(mag);
+    //     float pressure = (pressure_force(densities[i]) + pressure_force(densities[index])) / 2.0;
+    //     grad += -(diff / mag) * smooth_kern_deriv(mag, smoothing_rad) * pressure;
+    // }
 
     return grad;
 }
 
 
-float3 calc_pressure(float3 pos) {
+float3 add_grad(uint x, uint y, uint z, float rad_sqr, uint index) {
+    uint key = hash(x, y, z, num_particles);
     float3 grad = float3(0.0, 0.0, 0.0);
 
-    for (uint i = 0; i < num_particles; i++) {
-        float3 diff = particles[i].pos - pos;
+    for (uint i = start_i[key]; i < num_particles && keys[i] == key; i++) {
+        uint part_i = part_map[i];
+        if (part_i == index) {
+            continue;
+        }
+        float3 diff = pred_pos[index] - pred_pos[part_i];
         float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-        if (mag == 0.0) {
+        if (mag == 0.0 || mag > rad_sqr) {
             continue;
         }
         mag = sqrt(mag);
-        grad += (diff / mag) * particles[i].mass * smooth_kern_deriv(mag, 5) * pressure_force(densities[i]) / densities[i];
+        float pressure = (pressure_force(densities[part_i]) + pressure_force(densities[index])) / 2.0;
+        grad += -(diff / mag) * smooth_kern_deriv(mag, smoothing_rad) * pressure;
     }
 
     return grad;
@@ -120,5 +135,18 @@ float3 calc_pressure(float3 pos) {
 
 
 float pressure_force(float dens) {
-    return (dens - targ_dens) * press_mult;
+    return dens * press_mult;
+}
+
+
+uint hash(uint x, uint y, uint z, uint table_size) {
+    const uint xhash = 73856093;
+    const uint yhash = 19349663;
+    const uint zhash = 83492791;
+    return mod((x * xhash) ^ (y * yhash) ^ (z * zhash), table_size);
+}
+
+
+uint mod(uint num, uint denom) {
+    return num - ((uint)num / denom) * denom;
 }

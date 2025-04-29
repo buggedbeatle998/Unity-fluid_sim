@@ -1,0 +1,84 @@
+#pragma kernel swapper
+#pragma kernel reorderer
+
+
+uint num_particles;
+uint ceil_particles;
+uint log_parts;
+uint swap_num;
+uint main;
+
+RWBuffer<uint> part_map;
+RWBuffer<uint> keys;
+RWBuffer<uint> start_i;
+
+
+uint log2_32(uint num);
+
+
+[numthreads(1024, 1, 1)]
+void swapper(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (ceil_particles >> 1)) {
+        return;
+    }
+
+    uint floored = (id.x << swap_num) >> log_parts;
+    uint modded = (id.x << swap_num) - (floored << log_parts);
+    uint first = modded + floored;
+    uint last;
+    if (swap_num == main) {
+        last = modded + (1 << swap_num) - 1;
+        last -= floored;
+    } else {
+        last = first + (1 << (swap_num - 1));
+    }
+
+    if (last < num_particles && keys[first] > keys[last]) {
+
+        uint temp = keys[first];
+        keys[first] = keys[last];
+        keys[last] = temp;
+        temp = part_map[first];
+        part_map[first] = part_map[last];
+        part_map[last] = temp;
+    }
+
+    // if (log_parts == main && swap_num == 1 && first < num_particles) {
+    //     if (first < start_i[keys[first]]) {
+    //         start_i[keys[first]] = first;
+    //     }
+        
+    //     if (last < num_particles && last < start_i[keys[last]]) {
+    //         start_i[keys[last]] = last;
+    //     }
+    // }
+}
+
+
+static const uint tab32[32] = {
+    0,  9,  1, 10, 13, 21,  2, 29,
+    11, 14, 16, 18, 22, 25,  3, 30,
+    8, 12, 20, 28, 15, 17, 24,  7,
+    19, 27, 23,  6, 26,  5,  4, 31};
+uint log2_32(uint num) {
+    num |= num >> 1;
+    num |= num >> 2;
+    num |= num >> 4;
+    num |= num >> 8;
+    num |= num >> 16;
+    return tab32[(num * 0x07C4ACDD) >> 27];
+}
+
+
+[numthreads(1, 1, 1)]
+void reorderer(uint3 id : SV_DispatchThreadID)
+{
+    int prev = -1;
+    for (uint i = 0; i < num_particles; i++) {
+        if ((int)keys[i] > prev) {
+            start_i[keys[i]] = i;
+            prev = keys[i];
+        }
+    }
+}

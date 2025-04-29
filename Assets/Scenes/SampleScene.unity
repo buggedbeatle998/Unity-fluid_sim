@@ -336,6 +336,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 11257a803621c8748aa38c8c9da671b5, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  precalc_compute: {fileID: 7200000, guid: c278192041f85794aafb30288d515d4c, type: 3}
+  bitonic_compute: {fileID: 7200000, guid: 0dd7ab7801e089f49a12a0527c73e5f5, type: 3}
   physics_compute: {fileID: 7200000, guid: 2a39366ce0a614e4ebb2e56773224ccc, type: 3}
   renderer_compute: {fileID: 7200000, guid: 50e1592935853204eac6104bd20833e5, type: 3}
   render_texture: {fileID: 0}

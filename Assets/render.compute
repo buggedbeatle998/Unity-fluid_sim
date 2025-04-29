@@ -1,45 +1,167 @@
 // Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel CSMain
+#pragma kernel ray_trace
 
 
-struct Particle {
-    float3 pos;
-    float3 velocity;
-    float mass;
-};
 
 
 uint2 res;
 float fov;
 float3 origin;
 uint num_particles;
+float smoothing_rad;
+int2 selected;
 
-RWStructuredBuffer<Particle> particles;
+RWStructuredBuffer<float3> positions;
+RWStructuredBuffer<float3> velocities;
+RWBuffer<float> masses;
+Buffer<float> densities;
+Buffer<uint> part_map;
+Buffer<uint> keys;
+Buffer<uint> start_i;
 
 RWTexture2D<float4> Result;
 
-[numthreads(8, 8, 1)]
-void CSMain (uint3 id : SV_DispatchThreadID) {
+
+bool check(uint x, uint y, uint z, float xpos, float ypos, float rad_sqr, uint3 id, uint selected);
+uint hash(uint x, uint y, uint z, uint table_size);
+uint mod(uint num, uint denom);
+
+
+[numthreads(32, 32, 1)]
+void ray_trace(uint3 id : SV_DispatchThreadID) {
     float rad = 0.25;
+    float rad_sqr = rad * rad;
     Result[id.xy] = float4(0.0, 0.0, 0.0, 1.0);
     float rad_fov = radians(fov);
     float horz = sin(rad_fov) * (int)(id.x - ((res.x >> 1) + 1)) / res.x;
     float vert = sin(rad_fov * res.y / res.x) * (int)(id.y - ((res.y >> 1) + 1)) / res.y;
-    float3 start = float3(horz, vert, 1.0) * rsqrt(horz * horz + vert * vert + 1);
+    //float3 start = float3(horz, vert, 1.0) * rsqrt(horz * horz + vert * vert + 1);
 
-    uint i = 0;
-    for (; i < num_particles; i++) {
-        Particle particle = particles[i];
-        float3 diff = origin - particle.pos;
-        float mid = dot(diff, start);
-        float discrim = mid * mid + (rad * rad - dot(diff, diff));
-        if (discrim > 0) {
-            float3 intersect = origin + start * -(mid + sqrt(discrim));
-            if (dot(intersect - origin, start) < 0) {
-                continue;
+    float xpos = origin.x - horz * origin.z;
+    float ypos = origin.y - vert * origin.z;
+    float zpos = 0;
+    int x = (int)(xpos / smoothing_rad);
+    int y = (int)(ypos / smoothing_rad);
+    int z = 0;
+    int2 sres = int2((int)(res.x / smoothing_rad), (int)(res.y / smoothing_rad));
+
+    uint key = hash(selected.x, selected.y, 0, num_particles);
+    if (hash(x, y, z, num_particles) == key) {
+        Result[id.xy] = float4(0.5, 0.0, 0.0, 1.0);
+    }
+
+    
+    // for (uint i = 0; i < num_particles; i++) {
+    //     if (hash(x, y, z, num_particles) != key) {
+    //         continue;
+    //     }
+    //     float3 postion = positions[i];
+    //     // float3 diff = origin - particle.pos;
+    //     // float mid = dot(diff, start);
+    //     // float discrim = mid * mid + (rad * rad - dot(diff, diff));
+    //     // if (discrim > 0) {
+    //     //     float3 intersect = origin + start * -(mid + sqrt(discrim));
+    //     //     if (dot(intersect - origin, start) < 0) {
+    //     //         continue;
+    //     //     }
+    //     //     float colour = 1.0 - abs(particles[i].velocity) / 4.0;
+    //     //     Result[id.xy] = float4(1.0, colour, colour, 1.0);
+    //     //     break;
+    //     // }
+    //     float diffx = postion.x - xpos;
+    //     float diffy = postion.y - ypos;
+    //     if (diffx * diffx + diffy * diffy < rad_sqr) {
+    //         Result[id.xy] = float4(1.0, 0.0, 0.0, 1.0);
+    //     }
+    // }
+
+    for (int m = x - 1; m < x + 2; m++) {
+        for (int n = y - 1; n < y + 2; n++) {
+            if (m >= 0 && n >= 0 && m < sres.x && n < sres.y) {
+                if(check((uint)m, (uint)n, 0, xpos, ypos, rad_sqr, id, key)) return;
+                //uint key = hash(m, n, 0, num_particles)
             }
-            Result[id.xy] = float4(1.0, 0.0, 0.0, 1.0);
-            break;
         }
     }
+
+    // if (check(x, y, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x - 1, y, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x + 1, y, 0, xpos, ypos, rad_sqr, id, key)) return;
+
+    // if (check(x, y + 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x - 1, y + 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x + 1, y + 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+
+    // if (check(x, y - 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x - 1, y - 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+    // if (check(x + 1, y - 1, 0, xpos, ypos, rad_sqr, id, key)) return;
+    
+    // if (check(x, y, 0, xpos, ypos, rad_sqr, id)) return;
+    // if (x > 0)
+    //     if (check(x - 1, y, 0, xpos, ypos, rad_sqr, id)) return;
+    // if (x < sres.x)
+    //     if (check(x + 1, y, 0, xpos, ypos, rad_sqr, id)) return;
+
+    // if (y > 0) {
+    //     if (check(x, y - 1, 0, xpos, ypos, rad_sqr, id)) return;
+    //     if (x > 0)
+    //         if (check(x - 1, y - 1, 0, xpos, ypos, rad_sqr, id)) return;
+    //     if (x < sres.x)
+    //         if (check(x + 1, y - 1, 0, xpos, ypos, rad_sqr, id)) return;
+    // }
+
+    // if (y < sres.y) {
+    //     if (check(x, y + 1, 0, xpos, ypos, rad_sqr, id)) return;
+    //     if (x > 0)
+    //         if (check(x - 1, y + 1, 0, xpos, ypos, rad_sqr, id)) return;
+    //     if (x < sres.x)
+    //         if (check(x + 1, y + 1, 0, xpos, ypos, rad_sqr, id)) return;
+    // }
+}
+
+
+bool check(uint x, uint y, uint z, float xpos, float ypos, float rad_sqr, uint3 id, uint selected) {
+    uint key = hash(x, y, z, num_particles);
+
+    for (uint i = start_i[key]; i < num_particles && keys[i] == key; i++) {
+        float3 postion = positions[part_map[i]];
+        // float3 diff = origin - particle.pos;
+        // float mid = dot(diff, start);
+        // float discrim = mid * mid + (rad * rad - dot(diff, diff));
+        // if (discrim > 0) {
+        //     float3 intersect = origin + start * -(mid + sqrt(discrim));
+        //     if (dot(intersect - origin, start) < 0) {
+        //         continue;
+        //     }
+        //     float colour = 1.0 - abs(particles[i].velocity) / 4.0;
+        //     Result[id.xy] = float4(1.0, colour, colour, 1.0);
+        //     break;
+        // }
+        float diffx = postion.x - xpos;
+        float diffy = postion.y - ypos;
+        if (diffx * diffx + diffy * diffy < rad_sqr) {
+            
+            if (key == selected) {
+                Result[id.xy] = float4(1.0, 0.0, 0.0, 1.0);
+            } else {
+                Result[id.xy] = float4(1.0, 1.0, 1.0, 1.0);
+            }
+            return true;
+        }
+    }
+
+    return false;
+}
+
+
+uint hash(uint x, uint y, uint z, uint table_size) {
+    const uint xhash = 73856093;
+    const uint yhash = 19349663;
+    const uint zhash = 83492791;
+    return mod((x * xhash) ^ (y * yhash) ^ (z * zhash), table_size);
+}
+
+
+uint mod(uint num, uint denom) {
+    return num - ((uint)num / denom) * denom;
 }

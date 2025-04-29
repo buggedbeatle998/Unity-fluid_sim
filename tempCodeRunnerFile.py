@@ -1,0 +1,1 @@
+(modded >> swap_num) & 1

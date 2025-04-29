@@ -73,6 +73,7 @@
     <None Include="Assets\render_spheres.compute" />
     <None Include="Assets\pre_calc.compute" />
     <None Include="Assets\physics_step.compute" />
+    <None Include="Assets\bitonic_swap.compute" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="UnityEngine">

@@ -81,12 +81,12 @@ void calc_dens(uint3 id : SV_DispatchThreadID)
 
 
 float smooth_kern(float dist, float rad) {
-    return dist < rad ? pow(rad - dist, 5) * 6.68450761 / pow(rad, 7) * smooth_scale : 0;
+    return dist < rad ? pow(rad - dist, 5) * 13.3690152197 / pow(rad, 8) * smooth_scale : 0;
 }
 
 
 float smooth_kern_deriv(float dist, float rad) {
-    return dist < rad ? pow(rad - dist, 4) * -33.422538 / pow(rad, 7) * smooth_scale : 0;
+    return dist < rad ? pow(rad - dist, 4) * -66.8450760986 / pow(rad, 8) * smooth_scale : 0;
 }
 
 
@@ -95,12 +95,15 @@ float calc_dens(uint index) {
     float rad_sqr = smoothing_rad * smoothing_rad;
     int posx = (int)pred_pos[index].x / smoothing_rad;
     int posy = (int)pred_pos[index].y / smoothing_rad;
-    int2 sres = int2((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad));
+    int posz = (int)pred_pos[index].z / smoothing_rad;
+    int3 sres = int3((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad), (int)(bounds.z / smoothing_rad));
 
     for (int m = posx - 1; m < posx + 2; m++) {
         for (int n = posy - 1; n < posy + 2; n++) {
-            if (m >= 0 && n >= 0 && m < sres.x && n < sres.y) {
-                dens += add_dens((uint)m, (uint)n, 0, rad_sqr, index);
+            for (int b = posz - 1; b < posz + 2; b++) {
+                if (m >= 0 && n >= 0 && b >= 0 && m < sres.x && n < sres.y, b < sres.z) {
+                    dens += add_dens((uint)m, (uint)n, (uint)b, rad_sqr, index);
+                }
             }
         }
     }

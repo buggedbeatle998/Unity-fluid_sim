@@ -9,6 +9,7 @@ float smoothing_rad;
 float smooth_scale;
 float3 gravity;
 float look_ahead;
+float visc_mult;
 
 RWStructuredBuffer<float3> positions;
 RWStructuredBuffer<float3> velocities;
@@ -27,6 +28,8 @@ float pressure_force(float dens);
 uint hash(uint x, uint y, uint z, uint table_size);
 uint mod(uint num, uint denom);
 float3 add_grad(uint x, uint y, uint z, float rad_sqr, uint index);
+float3 calc_viscosity(uint index);
+float3 add_visc(uint x, uint y, uint z, float rad_sqr, uint index);
 
 
 [numthreads(1024, 1, 1)]
@@ -39,7 +42,7 @@ void sim_step(uint3 id : SV_DispatchThreadID) {
     float3 velocity = velocities[id.x];
     float mass = masses[id.x];
 
-    float3 accel = calc_pressure(id.x) / mass;
+    float3 accel = (calc_pressure(id.x) + calc_viscosity(id.x)) / mass;
     velocity += accel * delta_time;
     velocity.y += gravity.y * delta_time;
 
@@ -52,12 +55,18 @@ void sim_step(uint3 id : SV_DispatchThreadID) {
         } else if (pos.y < 0.0) {
             velocity.y = -damp * velocity.y;
             pos.y = -pos.y;
+        } else if (pos.z < 0.0) {
+            velocity.z = -damp * velocity.z;
+            pos.z = -pos.z;
         } else if (pos.x > bounds.x) {
             velocity.x = -damp * velocity.x;
             pos.x = bounds.x + bounds.x - pos.x;
         } else if (pos.y > bounds.y) {
             velocity.y = -damp * velocity.y;
             pos.y = bounds.y + bounds.y - pos.y;
+        } else if (pos.z > bounds.z) {
+            velocity.z = -damp * velocity.z;
+            pos.z = bounds.z + bounds.z - pos.z;
         } else {
             break;
         }
@@ -69,12 +78,12 @@ void sim_step(uint3 id : SV_DispatchThreadID) {
 
 
 float smooth_kern(float dist, float rad) {
-    return dist < rad ? pow(rad - dist, 5) * 6.68450761 / pow(rad, 7) * smooth_scale : 0;
+    return dist < rad ? pow(rad - dist, 5) * 13.3690152197 / pow(rad, 8) * smooth_scale : 0;
 }
 
 
 float smooth_kern_deriv(float dist, float rad) {
-    return dist < rad ? pow(rad - dist, 4) * -33.422538 / pow(rad, 7) * smooth_scale : 0;
+    return dist < rad ? pow(rad - dist, 4) * -66.8450760986 / pow(rad, 8) * smooth_scale : 0;
 }
 
 
@@ -83,29 +92,18 @@ float3 calc_pressure(uint index) {
     float rad_sqr = smoothing_rad * smoothing_rad;
     int posx = (int)pred_pos[index].x / smoothing_rad;
     int posy = (int)pred_pos[index].y / smoothing_rad;
-    int2 sres = int2((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad));
+    int posz = (int)pred_pos[index].z / smoothing_rad;
+    int3 sres = int3((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad), (int)(bounds.z / smoothing_rad));
 
     for (int m = posx - 1; m < posx + 2; m++) {
         for (int n = posy - 1; n < posy + 2; n++) {
-            if (m >= 0 && n >= 0 && m < sres.x && n < sres.y) {
-                grad += add_grad((uint)m, (uint)n, 0, rad_sqr, index);
+            for (int b = posz - 1; b < posz + 2; b++) {
+                if (m >= 0 && n >= 0 && b >= 0 && m < sres.x && n < sres.y, b < sres.z) {
+                    grad += add_grad((uint)m, (uint)n, (uint)b, rad_sqr, index);
+                }
             }
         }
     }
-
-    // for (uint i = 0; i < num_particles; i++) {
-    //     if (index == i) {
-    //         continue;
-    //     }
-    //     float3 diff = pred_pos[index] - pred_pos[i];
-    //     float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-    //     if (mag == 0.0 || mag > rad_sqr) {
-    //         continue;
-    //     }
-    //     mag = sqrt(mag);
-    //     float pressure = (pressure_force(densities[i]) + pressure_force(densities[index])) / 2.0;
-    //     grad += -(diff / mag) * smooth_kern_deriv(mag, smoothing_rad) * pressure;
-    // }
 
     return grad;
 }
@@ -131,6 +129,50 @@ float3 add_grad(uint x, uint y, uint z, float rad_sqr, uint index) {
     }
 
     return grad;
+}
+
+
+float3 calc_viscosity(uint index) {
+    float3 visc = float3(0.0, 0.0, 0.0);
+    float rad_sqr = smoothing_rad * smoothing_rad;
+    int posx = (int)pred_pos[index].x / smoothing_rad;
+    int posy = (int)pred_pos[index].y / smoothing_rad;
+    int posz = (int)pred_pos[index].z / smoothing_rad;
+    int3 sres = int3((int)(bounds.x / smoothing_rad), (int)(bounds.y / smoothing_rad), (int)(bounds.z / smoothing_rad));
+
+    for (int m = posx - 1; m < posx + 2; m++) {
+        for (int n = posy - 1; n < posy + 2; n++) {
+            for (int b = posz - 1; b < posz + 2; b++) {
+                if (m >= 0 && n >= 0 && b >= 0 && m < sres.x && n < sres.y, b < sres.z) {
+                    visc += add_grad((uint)m, (uint)n, (uint)b, rad_sqr, index);
+                }
+            }
+        }
+    }
+
+    return visc * visc_mult;
+}
+
+
+float3 add_visc(uint x, uint y, uint z, float rad_sqr, uint index) {
+    uint key = hash(x, y, z, num_particles);
+    float3 visc = float3(0.0, 0.0, 0.0);
+
+    for (uint i = start_i[key]; i < num_particles && keys[i] == key; i++) {
+        uint part_i = part_map[i];
+        if (part_i == index) {
+            continue;
+        }
+        float3 diff = pred_pos[part_i] - pred_pos[index];
+        float mag = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+        if (mag == 0.0 || mag > rad_sqr) {
+            continue;
+        }
+        mag = sqrt(mag);
+        visc += (velocities[index] - velocities[part_i]) * smooth_kern(mag, smoothing_rad);
+    }
+
+    return visc;
 }
 
 

@@ -37,8 +37,8 @@ public class fluid_sim : MonoBehaviour
     ComputeBuffer key_buffer;
     ComputeBuffer start_buffer;
 
-    Vector3 bounds = new Vector3(100.0f, 100.0f, 0.0f);
-    uint num_particles = 10000;
+    Vector3 bounds = new Vector3(15.0f, 15.0f, 100.0f);
+    uint num_particles = 5000;
     bool playing = false;
     bool step = false;
     float press_mult = 50.0f;
@@ -46,14 +46,15 @@ public class fluid_sim : MonoBehaviour
     float gravity = 50.0f;
     float smooth_scale = 2.0f;//4.7f;
     float look_ahead = 1.0f/14.0f;
+    float visc_mult = 1.0f;
+    float dist = 100.0f;
+    float radius = 1.0f;
     int pos_kernel;
     int bitonic_kernel;
     int reorder_kernel;
     int dens_kernel;
     int step_kernel;
     int ray_kernel;
-    Vector2 selected = new Vector2(0,0);
-    bool shuffle = true;
     int[] prev1;
     int[] prev2;
     int[] prev3;
@@ -88,15 +89,15 @@ public class fluid_sim : MonoBehaviour
         
         if (e.isKey) {
             if (e.type == EventType.KeyDown) {
-                if (e.keyCode == KeyCode.W) {
-                    selected.y++;
-                } else if (e.keyCode == KeyCode.S) {
-                    selected.y--;
-                } else if (e.keyCode == KeyCode.D) {
-                    selected.x++;
-                } else if (e.keyCode == KeyCode.A) {
-                    selected.x--;
-                } else if (e.keyCode == KeyCode.V) {
+                // if (e.keyCode == KeyCode.W) {
+                //     selected.y++;
+                // } else if (e.keyCode == KeyCode.S) {
+                //     selected.y--;
+                // } else if (e.keyCode == KeyCode.D) {
+                //     selected.x++;
+                // } else if (e.keyCode == KeyCode.A) {
+                //     selected.x--;
+                if (e.keyCode == KeyCode.V) {
                     Debug.Log("now");
                     int[] thing1 = new int[num_particles];
                     int[] thing2 = new int[num_particles];
@@ -127,8 +128,6 @@ public class fluid_sim : MonoBehaviour
                     prev1 = thing1;
                     prev2 = thing2;
                     prev3 = thing3;
-                } else if (e.keyCode == KeyCode.R) {
-                    shuffle = true;
                 }
             }
         }
@@ -160,6 +159,15 @@ public class fluid_sim : MonoBehaviour
         
         GUI.Box(new Rect(25, 900, 300, 100), "Look: " + Math.Round(look_ahead, 2), myBoxStyle);
         look_ahead = GUI.HorizontalSlider(new Rect(25, 950, 300, 50), look_ahead, 0.0f, 0.1f);
+
+        GUI.Box(new Rect(350, 25, 300, 100), "Visc: " + Math.Round(visc_mult, 2), myBoxStyle);
+        visc_mult = GUI.HorizontalSlider(new Rect(350, 75, 300, 50), visc_mult, 0.0f, 5.0f);
+
+        GUI.Box(new Rect(350, 150, 300, 100), "Dist: " + Math.Round(dist, 2), myBoxStyle);
+        dist = GUI.HorizontalSlider(new Rect(350, 200, 300, 50), dist, 0.0f, 180.0f);
+
+        GUI.Box(new Rect(350, 275, 300, 100), "Rad: " + Math.Round(radius, 2), myBoxStyle);
+        radius = GUI.HorizontalSlider(new Rect(350, 325, 300, 50), radius, 0.0f, 5.0f);
     }
 
 
@@ -169,10 +177,10 @@ public class fluid_sim : MonoBehaviour
         data.velocities = new Vector3[num_particles];
         data.masses = new float[num_particles];
         float spacing = 0.70f;
-        uint edge = (uint)Math.Sqrt(num_particles);
-        Vector3 bottomleft = new Vector3(((bounds.x - (edge * spacing)) / 2), ((bounds.y - (edge * spacing)) / 2), 0.0f);
+        uint edge = 10;//(uint)Math.Sqrt(num_particles);
+        Vector3 bottomleft = new Vector3((bounds.x - (edge * spacing)) / 2, (bounds.y - (edge * spacing)) / 2, (bounds.z - (edge * spacing)) / 2);
         for (uint i = 0; i < num_particles; i++) {
-            data.positions[i] = bottomleft + new Vector3((i % edge) * spacing, (uint)i / edge * spacing, 0.0f);
+            data.positions[i] = bottomleft + new Vector3((i % edge) * spacing, (uint)i / (edge * edge) * spacing, (((uint)i / edge) % edge) * spacing);
             //data[i].pos = new Vector3(UnityEngine.Random.Range(0, bounds.x), UnityEngine.Random.Range(0, bounds.y), UnityEngine.Random.Range(0, bounds.z));
             data.velocities[i] = new Vector3(0.0f, 0.0f, 0.0f);
             data.masses[i] = 1.0f;
@@ -224,7 +232,6 @@ public class fluid_sim : MonoBehaviour
                 bitonic_compute.Dispatch(bitonic_kernel, (int)Math.Ceiling((float)ceil_particles / bitonic_xsize), 1, 1);
             }
         }
-
 
         bitonic_compute.Dispatch(reorder_kernel, 1, 1, 1);
 
@@ -318,19 +325,20 @@ public class fluid_sim : MonoBehaviour
             physics_compute.SetVector("gravity", new Vector3(0, -gravity, 0));
             physics_compute.SetFloat("look_ahead", look_ahead);
             physics_compute.SetVector("bounds", bounds);
+            physics_compute.SetFloat("visc_mult", visc_mult);
             
-            renderer_compute.SetVector("res", new Vector2(render_texture.width, render_texture.height));
+            renderer_compute.SetVector("res", new Vector3(render_texture.width, render_texture.height, 1920.0f));
             renderer_compute.SetFloat("fov", 60.0f);
-            renderer_compute.SetVector("origin", new Vector3(bounds.x / 2, bounds.y / 2, -180.0f));
+            renderer_compute.SetVector("origin", new Vector3(bounds.x / 2, bounds.y / 2, -dist));
             renderer_compute.SetInt("num_particles", (int)num_particles);
             renderer_compute.SetFloat("smoothing_rad", smoothing_rad);
-            renderer_compute.SetVector("selected", selected);
-
-        // if (shuffle) {
-            precalc_compute.SetFloat("delta_time", Time.deltaTime);
+            renderer_compute.SetFloat("delta_time", Time.deltaTime);
+            Vector3 sun = new Vector3(1.0f, 1.0f, -1.0f);
+            sun.Normalize();
+            renderer_compute.SetVector("sun", sun);
+            renderer_compute.SetFloat("rad", radius);
+            physics_compute.SetVector("bounds", bounds);
             precalc_compute.Dispatch(pos_kernel, (int)Math.Ceiling((float)num_particles / physics_xsize), 1, 1);
-        //     shuffle = false;
-        // }
 
         bitonic_sort();
 

@@ -21,11 +21,15 @@ public class fluid_sim : MonoBehaviour
     public ComputeShader bitonic_compute;
     public ComputeShader physics_compute;
     public ComputeShader renderer_compute;
+    public RenderTexture dens_map;
     public RenderTexture render_texture;
     uint xsize;
     uint ysize;
     uint physics_xsize;
     uint bitonic_xsize;
+    uint map_x;
+    uint map_y;
+    uint map_z;
     ComputeBuffer position_buffer;
     ComputeBuffer velocity_buffer;
     ComputeBuffer mass_buffer;
@@ -48,12 +52,14 @@ public class fluid_sim : MonoBehaviour
     float look_ahead = 1.0f/14.0f;
     float visc_mult = 1.0f;
     float dist = 100.0f;
-    float radius = 1.0f;
+    float refracts = 1.0f;
+    float step_size = 0.2f;
     int pos_kernel;
     int bitonic_kernel;
     int reorder_kernel;
     int dens_kernel;
     int step_kernel;
+    int map_kernel;
     int ray_kernel;
     int[] prev1;
     int[] prev2;
@@ -166,8 +172,8 @@ public class fluid_sim : MonoBehaviour
         GUI.Box(new Rect(350, 150, 300, 100), "Dist: " + Math.Round(dist, 2), myBoxStyle);
         dist = GUI.HorizontalSlider(new Rect(350, 200, 300, 50), dist, 0.0f, 180.0f);
 
-        GUI.Box(new Rect(350, 275, 300, 100), "Rad: " + Math.Round(radius, 2), myBoxStyle);
-        radius = GUI.HorizontalSlider(new Rect(350, 325, 300, 50), radius, 0.0f, 5.0f);
+        GUI.Box(new Rect(350, 275, 300, 100), "Refs: " + (int)refracts, myBoxStyle);
+        refracts = GUI.HorizontalSlider(new Rect(350, 325, 300, 50), refracts, 0.0f, 5.0f);
     }
 
 
@@ -195,10 +201,12 @@ public class fluid_sim : MonoBehaviour
         reorder_kernel = bitonic_compute.FindKernel("reorderer");
         dens_kernel = precalc_compute.FindKernel("calc_dens");
         step_kernel = physics_compute.FindKernel("sim_step");
+        map_kernel = renderer_compute.FindKernel("make_map");
         ray_kernel = renderer_compute.FindKernel("ray_trace");
 
         physics_compute.GetKernelThreadGroupSizes(step_kernel, out bitonic_xsize, out _, out _);
         physics_compute.GetKernelThreadGroupSizes(step_kernel, out physics_xsize, out _, out _);
+        renderer_compute.GetKernelThreadGroupSizes(map_kernel, out map_x, out map_y, out map_z);
         renderer_compute.GetKernelThreadGroupSizes(ray_kernel, out xsize, out ysize, out _);
 
         // Array.Sort(data, delegate(Sphere s1, Sphere s2) {
@@ -287,6 +295,7 @@ public class fluid_sim : MonoBehaviour
             submit_search_buffers(bitonic_compute, reorder_kernel);
             submit_search_buffers(precalc_compute, dens_kernel);
             submit_search_buffers(physics_compute, step_kernel);
+            submit_search_buffers(renderer_compute, map_kernel);
             submit_search_buffers(renderer_compute, ray_kernel);
             
             precalc_compute.SetBuffer(pos_kernel, "pred_pos", predpos_buffer);
@@ -296,8 +305,11 @@ public class fluid_sim : MonoBehaviour
             submit_particle_buffers(precalc_compute, pos_kernel);
             submit_particle_buffers(precalc_compute, dens_kernel);
             submit_particle_buffers(physics_compute, step_kernel);
+            submit_particle_buffers(renderer_compute, map_kernel);
             submit_particle_buffers(renderer_compute, ray_kernel);
 
+            renderer_compute.SetTexture(map_kernel, "dens_map", dens_map);
+            renderer_compute.SetTexture(ray_kernel, "dens_map", dens_map);
             renderer_compute.SetTexture(ray_kernel, "Result", render_texture);
 
             bitonic_compute.SetInt("num_particles", (int)num_particles);
@@ -336,8 +348,10 @@ public class fluid_sim : MonoBehaviour
             Vector3 sun = new Vector3(1.0f, 1.0f, -1.0f);
             sun.Normalize();
             renderer_compute.SetVector("sun", sun);
-            renderer_compute.SetFloat("rad", radius);
-            physics_compute.SetVector("bounds", bounds);
+            renderer_compute.SetInt("refracts", (int)refracts);
+            renderer_compute.SetVector("bounds", bounds);
+            renderer_compute.SetFloat("smooth_scale", smooth_scale);
+            renderer_compute.SetFloat("step_size", step_size);
             precalc_compute.Dispatch(pos_kernel, (int)Math.Ceiling((float)num_particles / physics_xsize), 1, 1);
 
         bitonic_sort();
@@ -350,7 +364,8 @@ public class fluid_sim : MonoBehaviour
             step = false;
         }
 
-        renderer_compute.Dispatch(ray_kernel, (int)Math.Ceiling((float)render_texture.width / xsize), render_texture.height / (int)ysize, 1);
+        renderer_compute.Dispatch(map_kernel, (int)Math.Ceiling((float)dens_map.width / map_x), (int)Math.Ceiling((float)dens_map.height / map_y), (int)Math.Ceiling((float)dens_map.volumeDepth / map_z));           
+        renderer_compute.Dispatch(ray_kernel, (int)Math.Ceiling((float)render_texture.width / xsize), (int)Math.Ceiling((float)render_texture.height / (int)ysize), 1);
 
         Graphics.Blit(render_texture, dest);
     }
@@ -368,7 +383,11 @@ public class fluid_sim : MonoBehaviour
         position_buffer = new ComputeBuffer((int)num_particles, sizeof(float) * 3);
         velocity_buffer = new ComputeBuffer((int)num_particles, sizeof(float) * 3);
         mass_buffer = new ComputeBuffer((int)num_particles, sizeof(float));
-        
+        dens_map = new RenderTexture((int)(bounds.x / step_size), (int)(bounds.y / step_size), 0);
+        dens_map.volumeDepth = (int)(bounds.z / step_size);
+        dens_map.enableRandomWrite = true;
+        dens_map.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
+        dens_map.Create();
         render_texture = new RenderTexture(1920, 1080, 24);
         render_texture.enableRandomWrite = true;
         render_texture.Create();
@@ -387,6 +406,7 @@ public class fluid_sim : MonoBehaviour
         velocity_buffer.Release();
         mass_buffer.Release();
 
+        dens_map.Release();
         render_texture.Release();
     }
 }

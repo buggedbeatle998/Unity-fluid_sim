@@ -42,6 +42,7 @@ public class fluid_sim : MonoBehaviour
     ComputeBuffer start_buffer;
 
     Vector3 bounds = new Vector3(15.0f, 15.0f, 100.0f);
+    Vector3 origin = new Vector3(0.0f, 0.0f, -60.0f);
     uint num_particles = 5000;
     bool playing = false;
     bool step = false;
@@ -52,7 +53,7 @@ public class fluid_sim : MonoBehaviour
     float look_ahead = 1.0f/14.0f;
     float visc_mult = 1.0f;
     float dist = 100.0f;
-    float refracts = 1.0f;
+    float refracts = 2.0f;
     float step_size = 0.2f;
     int pos_kernel;
     int bitonic_kernel;
@@ -64,6 +65,8 @@ public class fluid_sim : MonoBehaviour
     int[] prev1;
     int[] prev2;
     int[] prev3;
+    uint velocity = 0;
+    float speed = 10;
 
 
     // Start is called once before the first execution of Update after the MonoBehaviour is created
@@ -134,6 +137,32 @@ public class fluid_sim : MonoBehaviour
                     prev1 = thing1;
                     prev2 = thing2;
                     prev3 = thing3;
+                } else if (e.keyCode == KeyCode.W) {
+                    velocity |= (uint)1 << 0;
+                } else if (e.keyCode == KeyCode.S) {
+                    velocity |= (uint)1 << 1;
+                } else if (e.keyCode == KeyCode.D) {
+                    velocity |= (uint)1 << 2;
+                } else if (e.keyCode == KeyCode.A) {
+                    velocity |= (uint)1 << 3;
+                } else if (e.keyCode == KeyCode.Space) {
+                    velocity |= (uint)1 << 4;
+                } else if (e.keyCode == KeyCode.LeftShift) {
+                    velocity |= (uint)1 << 5;
+                }
+            } else if (e.type == EventType.KeyUp) {
+                if (e.keyCode == KeyCode.W) {
+                    velocity &= ~(uint)(1 << 0);
+                } else if (e.keyCode == KeyCode.S) {
+                    velocity &= ~(uint)(1 << 1);
+                } else if (e.keyCode == KeyCode.D) {
+                    velocity &= ~(uint)(1 << 2);
+                } else if (e.keyCode == KeyCode.A) {
+                    velocity &= ~(uint)(1 << 3);
+                } else if (e.keyCode == KeyCode.Space) {
+                    velocity &= ~(uint)(1 << 4);
+                } else if (e.keyCode == KeyCode.LeftShift) {
+                    velocity &= ~(uint)(1 << 5);
                 }
             }
         }
@@ -151,29 +180,29 @@ public class fluid_sim : MonoBehaviour
             step = true;
         }
 
-        GUI.Box(new Rect(25, 400, 300, 100), "Scale: " + Math.Round(smooth_scale, 2), myBoxStyle);
-        smooth_scale = GUI.HorizontalSlider(new Rect(25, 450, 300, 50), smooth_scale, 0.0f, 20.0f);
+        // GUI.Box(new Rect(25, 400, 300, 100), "Scale: " + Math.Round(smooth_scale, 2), myBoxStyle);
+        // smooth_scale = GUI.HorizontalSlider(new Rect(25, 450, 300, 50), smooth_scale, 0.0f, 20.0f);
 
-        GUI.Box(new Rect(25, 525, 300, 100), "Mult: " + Math.Round(press_mult, 2), myBoxStyle);
-        press_mult = GUI.HorizontalSlider(new Rect(25, 575, 300, 50), press_mult, 0.0f, 500.0f);
+        // GUI.Box(new Rect(25, 525, 300, 100), "Mult: " + Math.Round(press_mult, 2), myBoxStyle);
+        // press_mult = GUI.HorizontalSlider(new Rect(25, 575, 300, 50), press_mult, 0.0f, 500.0f);
 
-        GUI.Box(new Rect(25, 650, 300, 100), "Rad: " + Math.Round(smoothing_rad, 2), myBoxStyle);
-        smoothing_rad = GUI.HorizontalSlider(new Rect(25, 700, 300, 50), smoothing_rad, 0.1f, 100.0f);
+        // GUI.Box(new Rect(25, 650, 300, 100), "Rad: " + Math.Round(smoothing_rad, 2), myBoxStyle);
+        // smoothing_rad = GUI.HorizontalSlider(new Rect(25, 700, 300, 50), smoothing_rad, 0.1f, 100.0f);
 
-        GUI.Box(new Rect(25, 775, 300, 100), "Grav: " + Math.Round(gravity, 2), myBoxStyle);
-        gravity = GUI.HorizontalSlider(new Rect(25, 825, 300, 50), gravity, 0.0f, 500.0f);
+        // GUI.Box(new Rect(25, 775, 300, 100), "Grav: " + Math.Round(gravity, 2), myBoxStyle);
+        // gravity = GUI.HorizontalSlider(new Rect(25, 825, 300, 50), gravity, 0.0f, 500.0f);
         
-        GUI.Box(new Rect(25, 900, 300, 100), "Look: " + Math.Round(look_ahead, 2), myBoxStyle);
-        look_ahead = GUI.HorizontalSlider(new Rect(25, 950, 300, 50), look_ahead, 0.0f, 0.1f);
+        // GUI.Box(new Rect(25, 900, 300, 100), "Look: " + Math.Round(look_ahead, 2), myBoxStyle);
+        // look_ahead = GUI.HorizontalSlider(new Rect(25, 950, 300, 50), look_ahead, 0.0f, 0.1f);
 
-        GUI.Box(new Rect(350, 25, 300, 100), "Visc: " + Math.Round(visc_mult, 2), myBoxStyle);
-        visc_mult = GUI.HorizontalSlider(new Rect(350, 75, 300, 50), visc_mult, 0.0f, 5.0f);
+        // GUI.Box(new Rect(350, 25, 300, 100), "Visc: " + Math.Round(visc_mult, 2), myBoxStyle);
+        // visc_mult = GUI.HorizontalSlider(new Rect(350, 75, 300, 50), visc_mult, 0.0f, 5.0f);
 
-        GUI.Box(new Rect(350, 150, 300, 100), "Dist: " + Math.Round(dist, 2), myBoxStyle);
-        dist = GUI.HorizontalSlider(new Rect(350, 200, 300, 50), dist, 0.0f, 180.0f);
+        // GUI.Box(new Rect(350, 150, 300, 100), "Dist: " + Math.Round(dist, 2), myBoxStyle);
+        // dist = GUI.HorizontalSlider(new Rect(350, 200, 300, 50), dist, 0.0f, 180.0f);
 
-        GUI.Box(new Rect(350, 275, 300, 100), "Refs: " + (int)refracts, myBoxStyle);
-        refracts = GUI.HorizontalSlider(new Rect(350, 325, 300, 50), refracts, 0.0f, 5.0f);
+        // GUI.Box(new Rect(350, 275, 300, 100), "Refs: " + (int)refracts, myBoxStyle);
+        // refracts = GUI.HorizontalSlider(new Rect(350, 325, 300, 50), refracts, 0.0f, 5.0f);
     }
 
 
@@ -352,6 +381,8 @@ public class fluid_sim : MonoBehaviour
             renderer_compute.SetVector("bounds", bounds);
             renderer_compute.SetFloat("smooth_scale", smooth_scale);
             renderer_compute.SetFloat("step_size", step_size);
+            renderer_compute.SetVector("map_bounds", new Vector3((int)(bounds.x / step_size) + 1, (int)(bounds.y / step_size) + 1, (int)(bounds.z / step_size) + 1));
+
             precalc_compute.Dispatch(pos_kernel, (int)Math.Ceiling((float)num_particles / physics_xsize), 1, 1);
 
         bitonic_sort();
@@ -363,6 +394,11 @@ public class fluid_sim : MonoBehaviour
             physics_compute.Dispatch(step_kernel, (int)Math.Ceiling((float)num_particles / physics_xsize), 1, 1);
             step = false;
         }
+
+        origin += Time.deltaTime * speed * new Vector3((float)((velocity & (1 << 2)) >> 2) - (float)((velocity & (1 << 3)) >> 3),
+        (float)((velocity & (1 << 4)) >> 4) - (float)((velocity & (1 << 5)) >> 5),
+        (float)((velocity & (1 << 0)) >> 0) - (float)((velocity & (1 << 1)) >> 1));
+        renderer_compute.SetVector("origin", origin);
 
         renderer_compute.Dispatch(map_kernel, (int)Math.Ceiling((float)dens_map.width / map_x), (int)Math.Ceiling((float)dens_map.height / map_y), (int)Math.Ceiling((float)dens_map.volumeDepth / map_z));           
         renderer_compute.Dispatch(ray_kernel, (int)Math.Ceiling((float)render_texture.width / xsize), (int)Math.Ceiling((float)render_texture.height / (int)ysize), 1);
@@ -388,7 +424,7 @@ public class fluid_sim : MonoBehaviour
         dens_map.enableRandomWrite = true;
         dens_map.dimension = UnityEngine.Rendering.TextureDimension.Tex3D;
         dens_map.Create();
-        render_texture = new RenderTexture(1920, 1080, 24);
+        render_texture = new RenderTexture(640, 480, 24);
         render_texture.enableRandomWrite = true;
         render_texture.Create();
     }
